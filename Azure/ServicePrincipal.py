@@ -2,8 +2,6 @@
 
 import requests
 
-
-
 from msal import ConfidentialClientApplication
 from datetime import datetime, timedelta
 
@@ -11,7 +9,8 @@ import time
 import threading
 from typing import Optional, Callable
 
-from .Models import UserPrincipal, GroupPrincipal
+from .exceptions import *
+from .Models import UserPrincipal, GroupPrincipal, PrincipalPermissions
 from .Tools import Logger
 
 
@@ -46,15 +45,22 @@ class ServicePrincipal:
             self.__logger = Logger(self.tenant_id, self.__log_dir)
             self.__logger.log_message("Logger set for ServicePrincipal", "debug")
 
-    def check_access_token(self) -> bool:
+    def check_access_token(self) -> None:
         """Check if the access token is valid"""
         current_time = datetime.now()
         self.__logger.log_message(f"Access token check requested at: {current_time}", "debug")
         
         if self.__access_token is not None and self.__access_token_expiry > current_time:
-            return True
-        return False
-                
+            return None
+        
+        self.__logger.log_message("Access token is invalid", "debug")
+        self.__get_access_token()
+        
+        if self.__access_token is None:
+            raise InvalidToken("Access token is invalid")
+        
+        return None                
+    
     def __get_access_token(self) -> Optional[str]:
         """Get the access token for the service principal"""
         current_time = datetime.now()
@@ -85,9 +91,7 @@ class ServicePrincipal:
         """Get the service principal from Azure"""
         
         # Check if the access token is still valid
-        if not self.check_access_token():
-            if not self.__get_access_token():
-                raise Exception("Error getting access token")
+        self.check_access_token()
         
         # Get the service principal if the script has already cached it
         if self.__service_principal_id is not None:
@@ -124,9 +128,7 @@ class ServicePrincipal:
         """Get the groups assigned to the service principal"""
 
         # Check if the access token is still valid
-        if not self.check_access_token():
-            if not self.__get_access_token():
-                raise Exception("Error getting access token")
+        self.check_access_token()
         
         # Get the service principal id
         service_principal_id = self.get_service_principal()
@@ -135,7 +137,7 @@ class ServicePrincipal:
         
         self.__logger.log_message(f"Getting groups assigned to service principal: {service_principal_id}", "info")
         
-        target_url = f"https://graph.microsoft.com/v1.0/servicePrincipals/{service_principal_id}/appRoleAssignedTo?$select=id,principalId,principalDisplayName,principalType,deletedDateTime"
+        target_url = f"https://graph.microsoft.com/v1.0/servicePrincipals/{service_principal_id}/appRoleAssignedTo?$select=id,principalId,principalDisplayName,principalType,deletedDateTime, appRoleId"
         headers = {
             "Authorization": f"Bearer {self.__access_token}",
             "Content-Type": "application/json"
@@ -157,18 +159,62 @@ class ServicePrincipal:
                         groups.append(GroupPrincipal(
                             group_id=principal['principalId'],
                             display_name=principal['principalDisplayName'],
+                            permissions_id=principal['appRoleId']
                         ))
             
         return groups
     
+    def get_assigned_permissions(self) -> Optional[list[PrincipalPermissions]]:
+        """Get assigened permissions to the service principal"""
+        
+        # Check if the access token is still valid
+        self.check_access_token()
+            
+        # Get the service principal id
+        service_principal_id = self.get_service_principal()
+        if service_principal_id is None:
+            return []
+        
+        self.__logger.log_message(f"Getting permissions assigned to service principal: {service_principal_id}", "info")
+        
+        target_url = f"https://graph.microsoft.com/v1.0/servicePrincipals/{service_principal_id}"
+        headers = {
+            "Authorization": f"Bearer {self.__access_token}",
+            "Content-Type": "application/json"
+        }
+        
+        try:
+            response = requests.get(target_url, headers=headers, timeout=60)
+            response.raise_for_status()
+        except requests.exceptions.HTTPError as e:
+            self.__logger.log_message(f"Error getting permissions assigned to service principal: {e}", "error")
+            return []
+        
+        permissions = []
+        
+        if response.status_code == 200:
+            if response.json()['appRoles']:
+                app_roles = response.json()['appRoles']
+                if len(app_roles) > 0:
+                    for app_role in app_roles:
+                        permissions.append(PrincipalPermissions(
+                            permission_id=app_role['id'],
+                            description=app_role['description'],
+                            display_name=app_role['displayName'],
+                            permissions_value=app_role['value'],
+                            is_enabled=True
+                        ))
+                        self.__logger.log_message(f"Permission found: {app_role['displayName']} ({app_role['id']} - {app_role['value']})", "debug")
+            else:
+                self.__logger.log_message("No permissions found", "debug")
+                
+        return permissions
     
     def get_assigned_users(self) -> list[UserPrincipal]:
         """Get the users assigned to the service principal"""
 
         # Check if the access token is still valid
-        if not self.check_access_token():
-            if not self.__get_access_token():
-                raise Exception("Error getting access token")
+        self.check_access_token()
         
         # Get the service principal id
         service_principal_id = self.get_service_principal()
@@ -177,7 +223,7 @@ class ServicePrincipal:
         
         self.__logger.log_message(f"Getting users assigned to service principal: {service_principal_id}", "info")
         
-        target_url = f"https://graph.microsoft.com/v1.0/servicePrincipals/{service_principal_id}/appRoleAssignedTo?$select=id,principalId,principalDisplayName,principalType,deletedDateTime"
+        target_url = f"https://graph.microsoft.com/v1.0/servicePrincipals/{service_principal_id}/appRoleAssignedTo?$select=id,principalId,principalDisplayName,principalType,deletedDateTime,appRoleId"
         headers = {
             "Authorization": f"Bearer {self.__access_token}",
             "Content-Type": "application/json"
@@ -200,7 +246,8 @@ class ServicePrincipal:
                             user_id=principal['principalId'],
                             email="",
                             name=principal['principalDisplayName'],
-                            source="Directly"
+                            source="Directly",
+                            permissions_id=principal['appRoleId']
                         ))
             
         return users
@@ -209,9 +256,7 @@ class ServicePrincipal:
         """Retrieve the users assigned to a group"""
         
         # Check if the access token is still valid
-        if not self.check_access_token():
-            if not self.__get_access_token():
-                raise Exception("Error getting access token")
+        self.check_access_token()
         
         # Get the service principal id
         service_principal_id = self.get_service_principal()
@@ -246,7 +291,8 @@ class ServicePrincipal:
                         user_id=user['id'],
                         email=user['userPrincipalName'],
                         name=user['displayName'],
-                        source=group.display_name
+                        source=group.display_name,
+                        permissions_id=group.permissions_id
                     ))
         
         return users
@@ -255,9 +301,7 @@ class ServicePrincipal:
         """Get the user principal name from the user id"""
         
         # Check if the access token is still valid
-        if not self.check_access_token():
-            if not self.__get_access_token():
-                raise Exception("Error getting access token")
+        self.check_access_token()
             
         self.__logger.log_message(f"Getting user principal name for user: {user_id}", "info")
         

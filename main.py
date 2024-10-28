@@ -30,6 +30,7 @@ sp = ServicePrincipal(
 def print_users_callback(users: list[UserPrincipal]) -> None:
     """Callback function to print each UserPrincipal in the users list."""
     for user in users:
-        print(f"User ID: {user.user_id}, Name: {user.name}, Email: {user.email}, Source: {user.source}")
+        print(user.json())
 
 sp.auto_sync_service_principal(interval=3600, callback=print_users_callback)
+permissions = sp.get_assigned_permissions()

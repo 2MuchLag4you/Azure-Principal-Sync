@@ -1,5 +1,5 @@
 from azure_principal_sync import ServicePrincipal
-from azure_principal_sync.Models import UserPrincipal
+from azure_principal_sync.Models import UserPrincipal, GroupPrincipal, PrincipalPermissions
 from msal import ConfidentialClientApplication
 
 from dotenv import load_dotenv
@@ -31,6 +31,16 @@ def print_users_callback(users: list[UserPrincipal]) -> None:
     """Callback function to print each UserPrincipal in the users list."""
     for user in users:
         print(user.json())
+        
+def print_groups_callback(groups: list[GroupPrincipal]) -> None:
+    """Callback function to print each GroupPrincipal in the groups list."""
+    for group in groups:
+        print(group.json())
+        
+def print_permissions_callback(permissions: list[PrincipalPermissions]) -> None:
+    """Callback function to print each PrincipalPermissions in the permissions list."""
+    for permission in permissions:
+        print(permission.json())
 
 # Test sync every 2 minutes
-sp.auto_sync_service_principal(interval=120, callback=print_users_callback)
+sp.auto_sync_service_principal(interval=3600, user_callback=print_users_callback, group_callback=print_groups_callback, permission_callback=print_permissions_callback)

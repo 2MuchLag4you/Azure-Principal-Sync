@@ -29,6 +29,7 @@ class ServicePrincipal:
         self.__service_principal_id = None
         self.__log_dir = log_dir
         self.__sync_thread = None
+        self.__current_sync_users = []
         
         self.__scopes = [
             "https://graph.microsoft.com/.default"
@@ -236,21 +237,25 @@ class ServicePrincipal:
             self.__logger.log_message(f"Error getting users assigned to service principal: {e}", "error")
             return []
         
-        users = []
-        
         if response.status_code == 200:
             if response.json()['value']:
                 for principal in response.json()['value']:
                     if principal['principalType'] == "User":
-                        users.append(UserPrincipal(
-                            user_id=principal['principalId'],
-                            email="",
-                            name=principal['principalDisplayName'],
-                            source="Directly",
-                            permissions_id=principal['appRoleId']
-                        ))
-            
-        return users
+                        if principal['principalId'] not in [user.user_id for user in self.__current_sync_users]:
+                            self.__current_sync_users.append(UserPrincipal(
+                                user_id=principal['principalId'],
+                                email="",
+                                name=principal['principalDisplayName'],
+                                source="Directly",
+                                permissions=[principal['appRoleId']]
+                            ))
+                        else: 
+                            existing_user = next((user for user in self.__current_sync_users if user.user_id == principal['principalId']), None)
+                            if existing_user:
+                                existing_user.permissions.append(principal['appRoleId'])
+                                self.__current_sync_users.remove(existing_user)
+                                self.__current_sync_users.append(existing_user)
+        return self.__current_sync_users
 
     def get_users_assigned_to_group(self, group: GroupPrincipal) -> list[UserPrincipal]:
         """Retrieve the users assigned to a group"""
@@ -287,13 +292,20 @@ class ServicePrincipal:
         if response.status_code == 200:
             if response.json()['value']:
                 for user in response.json()['value']:
-                    users.append(UserPrincipal(
-                        user_id=user['id'],
-                        email=user['userPrincipalName'],
-                        name=user['displayName'],
-                        source=group.display_name,
-                        permissions_id=group.permissions_id
-                    ))
+                    if user['id'] not in [user_obj.user_id for user_obj in self.__current_sync_users]:
+                        self.__current_sync_users.append(UserPrincipal(
+                            user_id=user['id'],
+                            email=user['userPrincipalName'],
+                            name=user['displayName'],
+                            source=group.display_name,
+                            permissions=[group.permissions_id]
+                        ))
+                    else:
+                        self.__logger.log_message(f"User {user['id']} is already present", "warning")
+                        existing_user_obj = next((user_obj for user_obj in self.__current_sync_users if user_obj.user_id == user['id']), None)
+                        existing_user_obj.permissions.append(group.permissions_id)
+                        self.__current_sync_users.remove(existing_user_obj)
+                        self.__current_sync_users.append(existing_user_obj)
         
         return users
     
@@ -341,11 +353,16 @@ class ServicePrincipal:
             users += self.get_users_assigned_to_group(group)
         
         for user in users:
-            user.set_email(self.get_user_principal_name(user.user_id))
+            # Check if user is present multiple times
+            if users.count(user) > 1:
+                self.__logger.log_message(f"User {user.user_id} is present multiple times", "warning")
+            
+            if user.email == "":
+                user.set_email(self.get_user_principal_name(user.user_id))
         
         return users
     
-    def auto_sync_service_principal(self, interval: int = 3600, callback: Optional[Callable[[list[UserPrincipal]], None]] = None) -> None:
+    def auto_sync_service_principal(self, interval: int = 3600, user_callback: Optional[Callable[[list[UserPrincipal]], None]] = None, group_callback:  Optional[Callable[[list[UserPrincipal]], None]] = None, permission_callback:  Optional[Callable[[list[UserPrincipal]], None]] = None) -> None:
         """Auto sync of the service principal with an optional callback function after each sync."""
 
         # Function to run the auto sync process
@@ -353,8 +370,14 @@ class ServicePrincipal:
             """Thread to run the auto sync process"""
             while True:
                 users = self.sync_service_principal()  # Run the sync process
-                if callback:
-                    callback(users)  # Call the callback with the synced users
+                if user_callback:
+                    user_callback(users)  # Call the callback with the synced users
+                if group_callback:
+                    groups = self.get_assigned_groups()
+                    group_callback(groups)
+                if permission_callback:
+                    permissions = self.get_assigned_permissions()
+                    permission_callback(permissions)  
                 self.__logger.log_message(f"Thread is going to sleep for {interval} seconds", "debug")
                 time.sleep(interval) # Sleep for the interval
 
@@ -364,12 +387,18 @@ class ServicePrincipal:
         self.__logger.log_message("Auto sync of service principal with callback requested", "info")
     
     
-    def manual_sync_service_principal(self, callback: Optional[Callable[[list[UserPrincipal]], None]] = None) -> Optional[list[UserPrincipal]]:
+    def manual_sync_service_principal(self, user_callback: Optional[Callable[[list[UserPrincipal]], None]] = None, group_callback:  Optional[Callable[[list[UserPrincipal]], None]] = None, permission_callback:  Optional[Callable[[list[UserPrincipal]], None]] = None) -> Optional[list[UserPrincipal]]:
         """Manual sync of the service principal"""
         self.__logger.log_message("Manual sync of service principal requested", "info")
         users = self.sync_service_principal()
-        if callback:
-            callback(users)
-            return None
-
-        return users    
+        if user_callback:
+            user_callback(users)
+        if group_callback:
+            groups = self.get_assigned_groups()
+            group_callback(groups)
+        if permission_callback:
+            permissions = self.get_assigned_permissions()
+            permission_callback(permissions)
+        
+        
+        return None if user_callback else users

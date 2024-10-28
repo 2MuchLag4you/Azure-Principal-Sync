@@ -1,5 +1,5 @@
-from Azure import ServicePrincipal
-from Azure.Models import UserPrincipal
+from azure_principal_sync import ServicePrincipal
+from azure_principal_sync.Models import UserPrincipal
 from msal import ConfidentialClientApplication
 
 from dotenv import load_dotenv
@@ -32,5 +32,5 @@ def print_users_callback(users: list[UserPrincipal]) -> None:
     for user in users:
         print(user.json())
 
-sp.auto_sync_service_principal(interval=3600, callback=print_users_callback)
-permissions = sp.get_assigned_permissions()
+# Test sync every 2 minutes
+sp.auto_sync_service_principal(interval=120, callback=print_users_callback)

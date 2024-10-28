@@ -297,7 +297,7 @@ class ServicePrincipal:
         
         return users
     
-    def __get_user_principal_name(self, user_id: str) -> str:
+    def get_user_principal_name(self, user_id: str) -> str:
         """Get the user principal name from the user id"""
         
         # Check if the access token is still valid
@@ -341,7 +341,7 @@ class ServicePrincipal:
             users += self.get_users_assigned_to_group(group)
         
         for user in users:
-            user.set_email(self.__get_user_principal_name(user.user_id))
+            user.set_email(self.get_user_principal_name(user.user_id))
         
         return users
     
@@ -355,6 +355,7 @@ class ServicePrincipal:
                 users = self.sync_service_principal()  # Run the sync process
                 if callback:
                     callback(users)  # Call the callback with the synced users
+                self.__logger.log_message(f"Thread is going to sleep for {interval} seconds", "debug")
                 time.sleep(interval) # Sleep for the interval
 
         # Start the auto-sync in a separate thread
@@ -363,9 +364,12 @@ class ServicePrincipal:
         self.__logger.log_message("Auto sync of service principal with callback requested", "info")
     
     
-    def manual_sync_service_principal(self):
+    def manual_sync_service_principal(self, callback: Optional[Callable[[list[UserPrincipal]], None]] = None) -> Optional[list[UserPrincipal]]:
         """Manual sync of the service principal"""
-        
         self.__logger.log_message("Manual sync of service principal requested", "info")
-        return self.sync_service_principal()
-    
+        users = self.sync_service_principal()
+        if callback:
+            callback(users)
+            return None
+
+        return users    

@@ -219,6 +219,7 @@ class ServicePrincipal:
 
         # Check if the access token is still valid
         self.check_access_token()
+        self.__current_sync_users = []
         
         # Get the service principal id
         service_principal_id = self.get_service_principal()

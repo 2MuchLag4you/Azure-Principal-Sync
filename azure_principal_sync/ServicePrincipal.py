@@ -36,10 +36,13 @@ class ServicePrincipal:
         ]
         
         self.__logger = None
-        self.set_logger()
+        self.__set_logger()
         
+    def log_message(self, message: str, level: str) -> None:
+        """Log a message to the logger"""
+        self.__logger.log_message(message, level)
 
-    def set_logger(self) -> None:
+    def __set_logger(self) -> None:
         """Set the logger and log level"""
         
         if not isinstance(self.__logger, Logger):
